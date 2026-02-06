@@ -1238,4 +1238,20 @@ JSString* const* StackGCVectorStringAtIndex(
   return vec.begin() + index;
 }
 
+void PrintAndClearException(JSContext* cx) {
+    JS::ExceptionStack stack(cx);
+    if (!JS::StealPendingExceptionStack(cx, &stack)) {
+        fprintf(stderr, "Uncatchable exception thrown, out of memory or something");
+        exit(1);
+    }
+
+    JS::ErrorReportBuilder report(cx);
+    if (!report.init(cx, stack, JS::ErrorReportBuilder::WithSideEffects)) {
+        fprintf(stderr, "Couldn't build error report");
+        exit(1);
+    }
+
+    JS::PrintError(stderr, report, false);
+}
+
 }  // extern "C"
