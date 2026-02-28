@@ -48,7 +48,7 @@ use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::{already_AddRefed, jsid};
 use crate::jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
 use crate::jsapi::{HandleValueArray, StencilRelease};
-use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
+use crate::jsapi::{InitSelfHostedCode, IsWindowSlow, UseInternalJobQueues};
 use crate::jsapi::{JSAutoStructuredCloneBuffer, JSStructuredCloneCallbacks, StructuredCloneScope};
 use crate::jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use crate::jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
@@ -380,6 +380,8 @@ impl Runtime {
         let cache = crate::jsapi::__BindgenOpaqueArray::<u64, 2>::default();
         #[cfg(target_pointer_width = "32")]
         let cache = crate::jsapi::__BindgenOpaqueArray::<u32, 2>::default();
+
+        UseInternalJobQueues(js_context.as_ptr());
 
         InitSelfHostedCode(js_context.as_ptr(), cache, None);
 
