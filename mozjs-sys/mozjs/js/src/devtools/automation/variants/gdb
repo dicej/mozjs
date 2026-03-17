@@ -9,8 +9,8 @@
     "extra-tests": {
         "all": ["gdb"]
     },
-    "extra-args": {
-        "gdb": ["--exclude=unwind"]
+    "env": {
+        "GDBTEST_EXTRA_ARGS": "--exclude=unwind"
     },
     "use_minidump": false
 }

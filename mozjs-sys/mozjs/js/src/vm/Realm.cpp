@@ -163,8 +163,8 @@ ObjectRealm::getOrCreateNonSyntacticLexicalEnvironment(JSContext* cx,
   MOZ_ASSERT(key->is<NonSyntacticVariablesObject>() ||
              !key->is<EnvironmentObject>());
 
-  Rooted<NonSyntacticLexicalEnvironmentObject*> lexicalEnv(
-      cx, NonSyntacticLexicalEnvironmentObject::create(cx, enclosing, thisv));
+  NonSyntacticLexicalEnvironmentObject* lexicalEnv =
+      NonSyntacticLexicalEnvironmentObject::create(cx, enclosing, thisv);
   if (!lexicalEnv) {
     return nullptr;
   }
@@ -250,12 +250,6 @@ void Realm::traceGlobalData(JSTracer* trc) {
   DebugAPI::traceFromRealm(trc, this);
 }
 
-void Realm::traceGlobalRoot(JSTracer* trc, const char* name) {
-  if (global_) {
-    TraceRoot(trc, global_.unbarrieredAddress(), name);
-  }
-}
-
 void ObjectRealm::trace(JSTracer* trc) {
   if (objectMetadataTable) {
     objectMetadataTable->trace(trc);
@@ -278,8 +272,8 @@ void Realm::traceRoots(JSTracer* trc,
     //
     // If a realm is on-stack, we mark its global so that JSContext::global()
     // remains valid.
-    if (shouldTraceGlobal()) {
-      traceGlobalRoot(trc, "on-stack realm global");
+    if (shouldTraceGlobal() && global_) {
+      TraceRoot(trc, global_.unbarrieredAddress(), "on-stack realm global");
     }
 
     // If the realm is still being initialized we set a flag so that it doesn't
@@ -635,16 +629,16 @@ void AutoSetNewObjectMetadata::setPendingMetadata() {
   (void)SetNewObjectMetadata(cx_, obj);
 }
 
-JS_PUBLIC_API void gc::TraceRealmRoot(JSTracer* trc, JS::Realm* realm,
-                                      const char* name) {
-  // Trace the realm's global object to keep the realm alive.
+JS_PUBLIC_API void gc::TraceRealm(JSTracer* trc, JS::Realm* realm,
+                                  const char* name) {
+  // The way GC works with compartments is basically incomprehensible.
+  // For Realms, what we want is very simple: each Realm has a strong
+  // reference to its GlobalObject, and vice versa.
   //
-  // Note: this is called for Rooted<Realm*>. If a realm has been entered with
-  // AutoRealm, the global object is traced in Realm::traceRoots.
-  MOZ_RELEASE_ASSERT(realm->hasLiveGlobal(),
-                     "we need to have a global to keep the realm alive");
-  gc::AssertRootMarkingPhase(trc);
-  realm->traceGlobalRoot(trc, "rooted realm");
+  // Here we simply trace our side of that edge. During GC,
+  // GCRuntime::traceRuntimeCommon() marks all other realm roots, for
+  // all realms.
+  realm->traceGlobalData(trc);
 }
 
 JS_PUBLIC_API JS::Realm* JS::GetCurrentRealmOrNull(JSContext* cx) {
@@ -657,6 +651,10 @@ JS_PUBLIC_API JS::Realm* JS::GetObjectRealmOrNull(JSObject* obj) {
 
 JS_PUBLIC_API void* JS::GetRealmPrivate(JS::Realm* realm) {
   return realm->realmPrivate();
+}
+
+JS_PUBLIC_API bool JS::HasRealmInitializedGlobal(JS::Realm* realm) {
+  return realm->hasInitializedGlobal();
 }
 
 JS_PUBLIC_API void JS::SetRealmPrivate(JS::Realm* realm, void* data) {

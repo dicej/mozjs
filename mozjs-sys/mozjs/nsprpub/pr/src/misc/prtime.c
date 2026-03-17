@@ -1277,7 +1277,7 @@ PR_ParseTimeStringToExplodedTime(const char* string, PRBool default_to_gmt,
           {
             break;
           }
-          else if ((end - rest) == 2)
+          if ((end - rest) == 2)
             tmp_sec = ((rest[0] - '0') * 10 + (rest[1] - '0'));
           else {
             tmp_sec = (rest[0] - '0');

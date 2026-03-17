@@ -854,8 +854,10 @@ bool BigInt::absoluteDivWithBigIntDivisor(
   const unsigned n = divisor->digitLength();
   const unsigned m = dividend->digitLength() - n;
 
+  RootedTuple<BigInt*, BigInt*, BigInt*, BigInt*> roots(cx);
+
   // The quotient to be computed.
-  RootedBigInt q(cx);
+  RootedField<BigInt*, 0> q(roots);
   if (quotient) {
     q = createUninitialized(cx, m + 1, isNegative);
     if (!q) {
@@ -865,7 +867,8 @@ bool BigInt::absoluteDivWithBigIntDivisor(
 
   // In each iteration, `qhatv` holds `divisor` * `current quotient digit`.
   // "v" is the book's name for `divisor`, `qhat` the current quotient digit.
-  RootedBigInt qhatv(cx, createUninitialized(cx, n + 1, isNegative));
+  RootedField<BigInt*, 1> qhatv(roots,
+                                createUninitialized(cx, n + 1, isNegative));
   if (!qhatv) {
     return false;
   }
@@ -878,7 +881,7 @@ bool BigInt::absoluteDivWithBigIntDivisor(
   Digit lastDigit = divisor->digit(n - 1);
   unsigned shift = DigitLeadingZeroes(lastDigit);
 
-  RootedBigInt shiftedDivisor(cx);
+  RootedField<BigInt*, 2> shiftedDivisor(roots);
   if (shift > 0) {
     shiftedDivisor = absoluteLeftShiftAlwaysCopy(cx, divisor, shift,
                                                  LeftShiftMode::SameSizeResult);
@@ -891,9 +894,9 @@ bool BigInt::absoluteDivWithBigIntDivisor(
 
   // Holds the (continuously updated) remaining part of the dividend, which
   // eventually becomes the remainder.
-  RootedBigInt u(cx,
-                 absoluteLeftShiftAlwaysCopy(cx, dividend, shift,
-                                             LeftShiftMode::AlwaysAddOneDigit));
+  RootedField<BigInt*, 3> u(
+      roots, absoluteLeftShiftAlwaysCopy(cx, dividend, shift,
+                                         LeftShiftMode::AlwaysAddOneDigit));
   if (!u) {
     return false;
   }
@@ -3682,6 +3685,42 @@ JS::Result<bool> BigInt::equal(JSContext* cx, Handle<BigInt*> lhs,
     return false;
   }
   return equal(lhs, rhsBigInt);
+}
+
+// BigInt proposal section 3.2.5
+JS::Result<bool> BigInt::looselyEqual(JSContext* cx, HandleBigInt lhs,
+                                      HandleValue rhs) {
+  // Step 1.
+  if (rhs.isBigInt()) {
+    return equal(lhs, rhs.toBigInt());
+  }
+
+  // Steps 2-5 (not applicable).
+
+  // Steps 6-7.
+  if (rhs.isString()) {
+    RootedString rhsString(cx, rhs.toString());
+    return equal(cx, lhs, rhsString);
+  }
+
+  // Steps 8-9 (not applicable).
+
+  // Steps 10-11.
+  if (rhs.isObject()) {
+    RootedValue rhsPrimitive(cx, rhs);
+    if (!ToPrimitive(cx, &rhsPrimitive)) {
+      return cx->alreadyReportedError();
+    }
+    return looselyEqual(cx, lhs, rhsPrimitive);
+  }
+
+  // Step 12.
+  if (rhs.isNumber()) {
+    return equal(lhs, rhs.toNumber());
+  }
+
+  // Step 13.
+  return false;
 }
 
 // BigInt proposal section 1.1.12. BigInt::lessThan ( x, y )

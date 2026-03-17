@@ -73,7 +73,7 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
 
   bool updateArgc(CallFlags flags, Register argcReg, Register scratch);
   void loadStackObject(ArgumentKind kind, CallFlags flags, Register argcReg,
-                       Register dest, uint32_t extraArgs = 0);
+                       Register dest);
   void pushArguments(Register argcReg, Register calleeReg, Register scratch,
                      Register scratch2, CallFlags flags, uint32_t argcFixed,
                      bool isJitCall);
@@ -93,8 +93,9 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
                                   CallFlags flags, uint32_t numBoundArgs,
                                   bool isJitCall);
   void createThis(Register argcReg, Register calleeReg, Register scratch,
-                  Register scratch2, CallFlags flags,
-                  mozilla::Maybe<uint32_t> numBoundArgs = mozilla::Nothing());
+                  CallFlags flags, bool isBoundFunction);
+  template <typename T>
+  void storeThis(const T& newThis, Register argcReg, CallFlags flags);
   void updateReturnValue();
 
   enum class NativeCallType { Native, ClassHook };
@@ -117,11 +118,11 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
   void emitAtomizeString(Register str, Register temp, Label* failure);
 
   bool emitCallScriptedGetterShared(ValOperandId receiverId,
-                                    uint32_t getterOffset, bool sameRealm,
+                                    ObjOperandId calleeId, bool sameRealm,
                                     uint32_t nargsAndFlagsOffset,
                                     mozilla::Maybe<uint32_t> icScriptOffset);
   bool emitCallScriptedSetterShared(ObjOperandId receiverId,
-                                    uint32_t setterOffset, ValOperandId rhsId,
+                                    ObjOperandId calleeId, ValOperandId rhsId,
                                     bool sameRealm,
                                     uint32_t nargsAndFlagsOffset,
                                     mozilla::Maybe<uint32_t> icScriptOffset);

@@ -913,9 +913,8 @@ bool ModuleObject::isInstance(HandleValue value) {
 }
 
 bool ModuleObject::hasCyclicModuleFields() const {
-  bool result = !getReservedSlot(CyclicModuleFieldsSlot).isUndefined();
-  MOZ_ASSERT_IF(result, !hasSyntheticModuleFields());
-  return result;
+  // This currently only returns false if we GC during initialization.
+  return !getReservedSlot(CyclicModuleFieldsSlot).isUndefined();
 }
 
 CyclicModuleFields* ModuleObject::cyclicModuleFields() {
@@ -965,8 +964,7 @@ ModuleObject* ModuleObject::create(JSContext* cx) {
     return nullptr;
   }
 
-  Rooted<ModuleObject*> self(
-      cx, NewObjectWithGivenProto<ModuleObject>(cx, nullptr));
+  ModuleObject* self = NewObjectWithGivenProto<ModuleObject>(cx, nullptr);
   if (!self) {
     return nullptr;
   }
@@ -986,8 +984,7 @@ ModuleObject* ModuleObject::createSynthetic(
     return nullptr;
   }
 
-  Rooted<ModuleObject*> self(
-      cx, NewObjectWithGivenProto<ModuleObject>(cx, nullptr));
+  ModuleObject* self = NewObjectWithGivenProto<ModuleObject>(cx, nullptr);
   if (!self) {
     return nullptr;
   }
@@ -1497,9 +1494,7 @@ bool ModuleObject::createSyntheticEnvironment(JSContext* cx,
     return false;
   }
 
-  // We expect one property per synthetic value plus one for the *namespace*
-  // binding.
-  MOZ_ASSERT(env->shape()->propMapLength() == values.length() + 1);
+  MOZ_ASSERT(env->shape()->propMapLength() == values.length());
 
   for (uint32_t i = 0; i < values.length(); i++) {
     env->setAliasedBinding(env->firstSyntheticValueSlot() + i, values[i]);

@@ -934,6 +934,16 @@ def msvs_version(vc_compiler_version):
 
 set_config("MSVS_VERSION", msvs_version)
 
+with only_when(target_is_windows):
+
+    @depends(target)
+    def dxc_task_name(target):
+        return "dxc-" + target.cpu + "-pc-windows-msvc"
+
+    @depends_if(bootstrap_path(dxc_task_name))
+    def dxc_dll_path(bootstrap):
+        return os.path.join(bootstrap, "dxcompiler.dll")
+
 
 clang_search_path = bootstrap_search_path("clang/bin")
 
@@ -2445,7 +2455,7 @@ set_define("_LIBCPP_HIDE_FROM_ABI", libcxx_override_visibility.hide_from_abi)
 @depends(target, build_environment)
 def visibility_flags(target, env):
     if target.os != "WINNT":
-        if target.kernel in ("Darwin", "FreeBSD", "OpenBSD"):
+        if target.kernel == "Darwin":
             return ("-fvisibility=hidden", "-fvisibility-inlines-hidden")
         return (
             "-I%s/system_wrappers" % os.path.join(env.dist),

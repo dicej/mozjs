@@ -181,7 +181,6 @@ OBJDIR = os.path.abspath(OBJDIR)
 OUTDIR = os.path.join(OBJDIR, "out")
 MAKE = env.get("MAKE", "make")
 PYTHON = sys.executable
-MACH = os.path.join(DIR.source, "mach")
 
 for d in DIR._fields:
     info(f"DIR.{d} = {getattr(DIR, d)}")
@@ -378,13 +377,6 @@ def run_command(command, check=False, **kwargs):
     return stdout, stderr, status
 
 
-def run_mach_command(command, check=False, **kwargs):
-    _stdout, _stderr, status = run_command(
-        [PYTHON, MACH] + command, check=check, **kwargs
-    )
-    return status
-
-
 # Replacement strings in environment variables.
 REPLACEMENTS = {
     "DIR": DIR.scripts,
@@ -397,12 +389,6 @@ REPLACEMENTS = {
 # modify the flags passed to the shell or to set the GC zeal mode.
 for k, v in variant.get("env", {}).items():
     env[k] = v.format(**REPLACEMENTS)
-
-# Do similar substitution for the extra_args keyed lists.
-extra_args = {"jit-test": [], "jstests": [], "gdb": []}
-extra_args.update(variant.get("extra-args", {}))
-for v in extra_args.values():
-    v[:] = [arg.format(**REPLACEMENTS) for arg in v]
 
 if AUTOMATION:
     # Currently only supported on linux64.
@@ -461,9 +447,11 @@ with open(mozconfig, "w") as fh:
 
 env["MOZCONFIG"] = mozconfig
 
+mach = os.path.join(DIR.source, "mach")
+
 if not args.nobuild:
     # Do the build
-    run_mach_command(["build"], check=True)
+    run_command([sys.executable, mach, "build"], check=True)
 
     if use_minidump:
         # Convert symbols to breakpad format.
@@ -472,8 +460,10 @@ if not args.nobuild:
         cmd_env["RUSTC_COMMIT"] = "0"
         cmd_env["MOZ_CRASHREPORTER"] = "1"
         cmd_env["MOZ_AUTOMATION_BUILD_SYMBOLS"] = "1"
-        run_mach_command(
+        run_command(
             [
+                sys.executable,
+                mach,
                 "build",
                 "recurse_syms",
             ],
@@ -495,13 +485,18 @@ def run_test_command(command, **kwargs):
 
 
 def run_jsapitests(args):
+    jsapi_test_binary = os.path.join(OBJDIR, "dist", "bin", "jsapi-tests")
     test_env = env.copy()
+    test_env["TOPSRCDIR"] = DIR.source
     if use_minidump and platform.system() == "Linux":
         test_env["LD_PRELOAD"] = injector_lib
-    st = run_mach_command(["jsapi-tests"], env=test_env)
+    st = run_test_command([jsapi_test_binary] + args, env=test_env)
     if st < 0:
-        info = " ".join(["jsapi-tests"] + args)
-        print(f"PROCESS-CRASH | {info} | application crashed")
+        print(
+            "PROCESS-CRASH | {} | application crashed".format(
+                " ".join(["jsapi-tests"] + args)
+            )
+        )
         print(f"Return code: {st}")
     return st
 
@@ -554,9 +549,13 @@ jstest_workers = worker_max
 jittest_workers = worker_max
 if platform.system() == "Windows":
     jstest_workers = min(worker_max, 16)
-    extra_args["jstests"].append(f"-j{jstest_workers}")
+    env["JSTESTS_EXTRA_ARGS"] = f"-j{jstest_workers} " + env.get(
+        "JSTESTS_EXTRA_ARGS", ""
+    )
     jittest_workers = min(worker_max, 8)
-    extra_args["jit-test"].append(f"-j{jittest_workers}")
+    env["JITTEST_EXTRA_ARGS"] = f"-j{jittest_workers} " + env.get(
+        "JITTEST_EXTRA_ARGS", ""
+    )
 print(
     f"using {jstest_workers}/{worker_max} workers for jstests, "
     f"{jittest_workers}/{worker_max} for jittest"
@@ -568,12 +567,12 @@ if use_minidump:
     # cross-compiling from 64- to 32-bit, that will fail and produce stderr
     # output when running any 64-bit commands, which breaks eg mozconfig
     # processing. So use the --dll command line mechanism universally.
-    for suite in ("jstests", "jit-test"):
-        extra_args[suite].append(f"--args=--dll {injector_lib}")
+    for v in ("JSTESTS_EXTRA_ARGS", "JITTEST_EXTRA_ARGS"):
+        env[v] = "--args='--dll %s' %s" % (injector_lib, env.get(v, ""))
 
-# Report longest running tests in automation.
-for suite in ("jstests", "jit-test"):
-    extra_args[suite].append("--show-slow")
+# Report longest running jit-tests in automation.
+env["JITTEST_EXTRA_ARGS"] = "--show-slow " + env.get("JITTEST_EXTRA_ARGS", "")
+env["JSTESTS_EXTRA_ARGS"] = "--show-slow " + env.get("JSTESTS_EXTRA_ARGS", "")
 
 # Always run all enabled tests, even if earlier ones failed. But return the
 # first failed status.
@@ -583,45 +582,22 @@ if "checks" in test_suites:
     results.append(("make check", run_test_command([MAKE, "check"])))
 
 if "jittest" in test_suites:
-    auto_args = []
-    if AUTOMATION:
-        auto_args = [
-            "--no-slow",
-            "--no-progress",
-            "--format=automation",
-            "--timeout=300",
-            "--jitflags=all",
-        ]
-    results.append(
-        (
-            "mach jit-test",
-            run_mach_command(["jit-test", "--", *auto_args, *extra_args["jit-test"]]),
-        )
-    )
+    results.append(("make check-jit-test", run_test_command([MAKE, "check-jit-test"])))
 if "jsapitests" in test_suites:
     st = run_jsapitests([])
     if st == 0:
         st = run_jsapitests(["--frontend-only"])
     results.append(("jsapi-tests", st))
 if "jstests" in test_suites:
-    auto_args = []
-    if AUTOMATION:
-        auto_args = ["--no-progress", "--format=automation", "--timeout=300"]
-    results.append(
-        (
-            "mach jstests",
-            run_mach_command(["jstests", "--", *auto_args, *extra_args["jstests"]]),
-        )
-    )
+    results.append(("jstests", run_test_command([MAKE, "check-jstests"])))
 if "gdb" in test_suites:
     test_script = os.path.join(DIR.js_src, "gdb", "run-tests.py")
     auto_args = ["-s", "-o", "--no-progress"] if AUTOMATION else []
+    extra_args = env.get("GDBTEST_EXTRA_ARGS", "").split(" ")
     results.append(
         (
             "gdb",
-            run_test_command(
-                [PYTHON, test_script, *auto_args, *extra_args["gdb"], OBJDIR]
-            ),
+            run_test_command([PYTHON, test_script, *auto_args, *extra_args, OBJDIR]),
         )
     )
 
@@ -692,8 +668,9 @@ if args.variant == "wasi":
 
 # Generate stacks from minidumps.
 if use_minidump:
-    run_mach_command(
+    run_command(
         [
+            mach,
             "python",
             "--virtualenv=build",
             os.path.join(DIR.source, "testing/mozbase/mozcrash/mozcrash/mozcrash.py"),

@@ -4536,9 +4536,7 @@ void MacroAssembler::callWithABIPost(uint32_t stackAdjust, ABIType result,
     ma_mov(secondScratchReg_, lr);
   }
 
-  // Calls to native functions in wasm pass through a thunk which already
-  // fixes up the return value for us.
-  if (!callFromWasm && !ARMFlags::UseHardFpABI()) {
+  if (!ARMFlags::UseHardFpABI()) {
     switch (result) {
       case ABIType::Float64:
         // Move double from r0/r1 to ReturnFloatReg.
@@ -4862,24 +4860,20 @@ void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
 
 void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
                                        Register64 boundsCheckLimit, Label* ok) {
-  MOZ_ASSERT(cond == Assembler::AboveOrEqual || cond == Assembler::Below);
-  Label rejoin;
-  Label* failLabel = cond == Assembler::AboveOrEqual ? ok : &rejoin;
+  Label notOk;
   cmp32(index.high, Imm32(0));
-  j(Assembler::NonZero, failLabel);
+  j(Assembler::NonZero, &notOk);
   wasmBoundsCheck32(cond, index.low, boundsCheckLimit.low, ok);
-  bind(&rejoin);
+  bind(&notOk);
 }
 
 void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
                                        Address boundsCheckLimit, Label* ok) {
-  MOZ_ASSERT(cond == Assembler::AboveOrEqual || cond == Assembler::Below);
-  Label rejoin;
-  Label* failLabel = cond == Assembler::AboveOrEqual ? ok : &rejoin;
+  Label notOk;
   cmp32(index.high, Imm32(0));
-  j(Assembler::NonZero, failLabel);
+  j(Assembler::NonZero, &notOk);
   wasmBoundsCheck32(cond, index.low, boundsCheckLimit, ok);
-  bind(&rejoin);
+  bind(&notOk);
 }
 
 void MacroAssembler::wasmTruncateDoubleToUInt32(FloatRegister input,

@@ -453,10 +453,7 @@ Breakpoint::Breakpoint(Debugger* debugger, HandleObject wrappedDebugger,
 }
 
 void Breakpoint::trace(JSTracer* trc) {
-  MOZ_ASSERT_IF(trc->kind() != JS::TracerKind::Moving,
-                !IsDeadProxyObject(wrappedDebugger));
   TraceEdge(trc, &wrappedDebugger, "breakpoint owner");
-
   TraceEdge(trc, &handler, "breakpoint handler");
 }
 

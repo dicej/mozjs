@@ -139,12 +139,8 @@ struct BufferChunk : public ChunkBase,
   MainThreadOrGCTaskData<BufferMarkBitmap> markBits;
 
   using PerAllocBitmap = mozilla::BitSet<MaxAllocsPerChunk>;
-  using AtomicPerAllocBitmap =
-      mozilla::BitSet<MaxAllocsPerChunk,
-                      mozilla::Atomic<size_t, mozilla::Relaxed>>;
-
   MainThreadOrGCTaskData<PerAllocBitmap> allocBitmap;
-  MainThreadOrGCTaskData<AtomicPerAllocBitmap> nurseryOwnedBitmap;
+  MainThreadOrGCTaskData<PerAllocBitmap> nurseryOwnedBitmap;
 
   static constexpr size_t PagesPerChunk = ChunkSize / PageSize;
   using PerPageBitmap = mozilla::BitSet<PagesPerChunk, uint32_t>;
@@ -317,14 +313,7 @@ template <typename Pred>
 void BufferAllocator::FreeLists::eraseIf(Pred&& pred) {
   for (size_t i = 0; i < MediumAllocClasses; i++) {
     FreeList& freeList = lists[i];
-    FreeRegion* region = freeList.getFirst();
-    while (region) {
-      FreeRegion* next = region->getNext();
-      if (pred(region)) {
-        freeList.remove(region);
-      }
-      region = next;
-    }
+    freeList.eraseIf(std::forward<Pred>(pred));
     available[i] = !freeList.isEmpty();
   }
 }
@@ -1209,13 +1198,6 @@ void BufferAllocator::abortMajorSweeping(const AutoLock& lock) {
   MOZ_ASSERT(sweptMediumTenuredChunks.ref().isEmpty());
 
   clearAllocatedDuringCollectionState(lock);
-
-  if (minorState == State::Sweeping) {
-    // If we are minor sweeping then chunks with allocatedDuringCollection set
-    // may be present in |mixedChunksToSweep|. Set a flag so these are cleared
-    // when they are merged later.
-    majorFinishedWhileMinorSweeping = true;
-  }
 
   for (BufferChunk* chunk : mediumTenuredChunksToSweep.ref()) {
     chunk->markBits.ref().clear();
@@ -2434,7 +2416,7 @@ LargeBuffer* BufferAllocator::lookupLargeBuffer(void* alloc, MaybeLock& lock) {
     lock.emplace(this);
   }
 
-  auto ptr = largeAllocMap.ref().lookup(alloc);
+  auto ptr = largeAllocMap.ref().readonlyThreadsafeLookup(alloc);
   MOZ_ASSERT(ptr);
   LargeBuffer* buffer = ptr->value();
   MOZ_ASSERT(buffer->data() == alloc);

@@ -783,18 +783,16 @@ void MacroAssembler::callWithABIPost(uint32_t stackAdjust, ABIType result,
 
   // Calls to native functions in wasm pass through a thunk which already
   // fixes up the return value for us.
-  if (!callFromWasm) {
-    if (result == ABIType::Float64) {
-      reserveStack(sizeof(double));
-      fstp(Operand(esp, 0));
-      loadDouble(Operand(esp, 0), ReturnDoubleReg);
-      freeStack(sizeof(double));
-    } else if (result == ABIType::Float32) {
-      reserveStack(sizeof(float));
-      fstp32(Operand(esp, 0));
-      loadFloat32(Operand(esp, 0), ReturnFloat32Reg);
-      freeStack(sizeof(float));
-    }
+  if (result == ABIType::Float64) {
+    reserveStack(sizeof(double));
+    fstp(Operand(esp, 0));
+    loadDouble(Operand(esp, 0), ReturnDoubleReg);
+    freeStack(sizeof(double));
+  } else if (result == ABIType::Float32) {
+    reserveStack(sizeof(float));
+    fstp32(Operand(esp, 0));
+    loadFloat32(Operand(esp, 0), ReturnFloat32Reg);
+    freeStack(sizeof(float));
   }
 
   if (dynamicAlignment_) {
@@ -1882,24 +1880,20 @@ void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
 
 void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
                                        Register64 boundsCheckLimit, Label* ok) {
-  MOZ_ASSERT(cond == Assembler::AboveOrEqual || cond == Assembler::Below);
-  Label rejoin;
-  Label* failLabel = cond == Assembler::AboveOrEqual ? ok : &rejoin;
+  Label notOk;
   cmp32(index.high, Imm32(0));
-  j(Assembler::NonZero, failLabel);
+  j(Assembler::NonZero, &notOk);
   wasmBoundsCheck32(cond, index.low, boundsCheckLimit.low, ok);
-  bind(&rejoin);
+  bind(&notOk);
 }
 
 void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
                                        Address boundsCheckLimit, Label* ok) {
-  MOZ_ASSERT(cond == Assembler::AboveOrEqual || cond == Assembler::Below);
-  Label rejoin;
-  Label* failLabel = cond == Assembler::AboveOrEqual ? ok : &rejoin;
+  Label notOk;
   cmp32(index.high, Imm32(0));
-  j(Assembler::NonZero, failLabel);
+  j(Assembler::NonZero, &notOk);
   wasmBoundsCheck32(cond, index.low, boundsCheckLimit, ok);
-  bind(&rejoin);
+  bind(&notOk);
 }
 
 void MacroAssembler::wasmMarkCallAsSlow() {

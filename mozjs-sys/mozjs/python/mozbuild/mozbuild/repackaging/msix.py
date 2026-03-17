@@ -59,7 +59,7 @@ def log_copy_result(log, elapsed, destdir, result):
 _MSIX_ARCH = {"x86": "x86", "x86_64": "x64", "aarch64": "arm64"}
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def sdk_tool_search_path():
     from mozbuild.configure import ConfigureSandbox
 
@@ -354,7 +354,6 @@ def repackage_msix(
     if channel not in (
         "official",
         "beta",
-        "esr",
         "aurora",
         "nightly",
         "unofficial",
@@ -413,17 +412,9 @@ def repackage_msix(
     if not displayname:
         displayname = f"Mozilla {first}"
 
-        # Release (official) and Beta share branding.  Differentiate Beta a little bit.
         if channel == "beta":
-            suffix = " Beta"
-            if not displayname.endswith(suffix):
-                displayname += suffix
-
-        elif channel == "esr":
-            # Release (official) and ESR share branding.  Differentiate ESR a little bit.
-            suffix = " ESR"
-            if not displayname.endswith(suffix):
-                displayname += suffix
+            # Release (official) and Beta share branding.  Differentiate Beta a little bit.
+            displayname += " Beta"
 
     second = next(values)
     vendor = vendor or second
@@ -481,17 +472,9 @@ def repackage_msix(
     _, _, brandFullName = brandFullName.partition("=")
     brandFullName = brandFullName.strip()
 
-    # Release (official) and Beta share branding.  Differentiate Beta a little bit.
     if channel == "beta":
-        suffix = " Beta"
-        if not brandFullName.endswith(suffix):
-            brandFullName += suffix
-
-    elif channel == "esr":
-        # Release (official) and ESR share branding.  Differentiate ESR a little bit.
-        suffix = " ESR"
-        if not brandFullName.endswith(suffix):
-            brandFullName += suffix
+        # Release (official) and Beta share branding.  Differentiate Beta a little bit.
+        brandFullName += " Beta"
 
     branding = get_branding(
         use_official_branding, topsrcdir, build_app, unpack_finder, log

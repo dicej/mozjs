@@ -185,7 +185,7 @@ bool js::CreateRegExpMatchResult(JSContext* cx, HandleRegExpShared re,
         indices->setDenseInitializedLength(i + 1);
         indices->initDenseElement(i, UndefinedValue());
       } else {
-        Rooted<ArrayObject*> indexPair(cx, NewDenseFullyAllocatedArray(cx, 2));
+        ArrayObject* indexPair = NewDenseFullyAllocatedArray(cx, 2);
         if (!indexPair) {
           return false;
         }
@@ -1058,7 +1058,7 @@ static constexpr auto AsciiRegExpEscapeMap() {
  */
 template <typename CharT>
 [[nodiscard]] static bool EncodeForRegExpEscape(
-    JSContext* cx, mozilla::Span<const CharT> chars, JSStringBuilder& sb) {
+    mozilla::Span<const CharT> chars, JSStringBuilder& sb) {
   MOZ_ASSERT(sb.empty());
 
   const size_t length = chars.size();
@@ -1075,7 +1075,7 @@ template <typename CharT>
 
   // Initial scan to determine if escape sequences are needed and to compute
   // the output length.
-  mozilla::CheckedInt<size_t> outLength = length;
+  size_t outLength = length;
 
   // Leading Ascii alpha-numeric character is hex-escaped.
   size_t scanStart = 0;
@@ -1115,16 +1115,12 @@ template <typename CharT>
       outLength += UnicodeEscapeAddLength;
     }
   }
-  if (!outLength.isValid()) {
-    ReportAllocationOverflow(cx);
-    return false;
-  }
 
   // Return if no escape sequences are needed.
-  if (outLength.value() == length) {
+  if (outLength == length) {
     return true;
   }
-  MOZ_ASSERT(outLength.value() > length);
+  MOZ_ASSERT(outLength > length);
 
   // Inflating is fallible, so we have to convert to two-byte upfront.
   if constexpr (std::is_same_v<CharT, char16_t>) {
@@ -1134,7 +1130,7 @@ template <typename CharT>
   }
 
   // Allocate memory for the output using the final length.
-  if (!sb.reserve(outLength.value())) {
+  if (!sb.reserve(outLength)) {
     return false;
   }
 
@@ -1234,20 +1230,19 @@ template <typename CharT>
     appendUnescaped(length);
   }
 
-  MOZ_ASSERT(sb.length() == outLength.value(), "all characters were written");
+  MOZ_ASSERT(sb.length() == outLength, "all characters were written");
   return true;
 }
 
-[[nodiscard]] static bool EncodeForRegExpEscape(JSContext* cx,
-                                                JSLinearString* string,
+[[nodiscard]] static bool EncodeForRegExpEscape(JSLinearString* string,
                                                 JSStringBuilder& sb) {
   JS::AutoCheckCannotGC nogc;
   if (string->hasLatin1Chars()) {
     auto chars = mozilla::Span(string->latin1Range(nogc));
-    return EncodeForRegExpEscape(cx, chars, sb);
+    return EncodeForRegExpEscape(chars, sb);
   }
   auto chars = mozilla::Span(string->twoByteRange(nogc));
-  return EncodeForRegExpEscape(cx, chars, sb);
+  return EncodeForRegExpEscape(chars, sb);
 }
 
 /**
@@ -1271,7 +1266,7 @@ static bool regexp_escape(JSContext* cx, unsigned argc, Value* vp) {
 
   // Step 2-5.
   JSStringBuilder sb(cx);
-  if (!EncodeForRegExpEscape(cx, string, sb)) {
+  if (!EncodeForRegExpEscape(string, sb)) {
     return false;
   }
 
@@ -2559,7 +2554,7 @@ bool js::intrinsic_GetStringDataProperty(JSContext* cx, unsigned argc,
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 2);
 
-  RootedObject obj(cx, &args[0].toObject());
+  JSObject* obj = &args[0].toObject();
   if (!obj->is<NativeObject>()) {
     // The object is already checked to be native in GetElemBaseForLambda,
     // but it can be swapped to another class that is non-native.
@@ -2567,6 +2562,9 @@ bool js::intrinsic_GetStringDataProperty(JSContext* cx, unsigned argc,
     args.rval().setUndefined();
     return true;
   }
+
+  // No need to root |obj| because |AtomizeString| can't GC.
+  JS::AutoCheckCannotGC nogc;
 
   JSAtom* atom = AtomizeString(cx, args[1].toString());
   if (!atom) {

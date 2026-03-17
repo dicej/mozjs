@@ -8,47 +8,24 @@
 #define mozilla_BitSet_h
 
 #include "mozilla/Array.h"
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/PodOperations.h"
 #include "mozilla/Span.h"
 
 namespace mozilla {
-
-enum MemoryOrdering : uint8_t;
-template <typename T, MemoryOrdering Order, typename Enable>
-class Atomic;
-
-namespace detail {
-
-template <typename T>
-struct UnwrapMaybeAtomic {
-  using Type = T;
-};
-template <typename T, MemoryOrdering Order, typename Enable>
-struct UnwrapMaybeAtomic<mozilla::Atomic<T, Order, Enable>> {
-  using Type = T;
-};
-
-}  // namespace detail
 
 /**
  * An object like std::bitset but which provides access to the underlying
  * storage.
  *
- * The type |StorageType| must be an unsigned integer or a mozilla::Atomic
- * wrapping an unsigned integer. Use of atomic types makes word access atomic,
- * but does not make operations that operate on the whole bitset atomic.
- *
  * The limited API is due to expedience only; feel free to flesh out any
  * std::bitset-like members.
  */
-template <size_t N, typename StorageType = size_t>
+template <size_t N, typename Word = size_t>
 class BitSet {
- public:
-  using Word = typename detail::UnwrapMaybeAtomic<StorageType>::Type;
-  static_assert(sizeof(Word) == sizeof(StorageType));
-  static_assert(
-      std::is_unsigned_v<Word>,
-      "StorageType must be an unsigned integral type, or equivalent Atomic");
+  static_assert(std::is_unsigned_v<Word>,
+                "The Word type must be an unsigned integral type");
   static_assert(N != 0);
 
  private:
@@ -58,7 +35,7 @@ class BitSet {
   static constexpr Word kPaddingMask = Word(-1) >> kPaddingBits;
 
   // The zeroth bit in the bitset is the least significant bit of mStorage[0].
-  Array<StorageType, kNumWords> mStorage;
+  Array<Word, kNumWords> mStorage;
 
   constexpr void ResetPaddingBits() {
     if constexpr (kPaddingBits != 0) {
@@ -69,24 +46,20 @@ class BitSet {
  public:
   class Reference {
    public:
-    Reference(BitSet<N, StorageType>& aBitSet, size_t aPos)
+    Reference(BitSet<N, Word>& aBitSet, size_t aPos)
         : mBitSet(aBitSet), mPos(aPos) {}
 
     Reference& operator=(bool aValue) {
       auto bit = Word(1) << (mPos % kBitsPerWord);
       auto& word = mBitSet.mStorage[mPos / kBitsPerWord];
-      if (aValue) {
-        word |= bit;
-      } else {
-        word &= ~bit;
-      }
+      word = (word & ~bit) | (aValue ? bit : 0);
       return *this;
     }
 
     MOZ_IMPLICIT operator bool() const { return mBitSet.test(mPos); }
 
    private:
-    BitSet<N, StorageType>& mBitSet;
+    BitSet<N, Word>& mBitSet;
     size_t mPos;
   };
 
@@ -95,16 +68,12 @@ class BitSet {
   BitSet(const BitSet& aOther) { *this = aOther; }
 
   BitSet& operator=(const BitSet& aOther) {
-    for (size_t i = 0; i < std::size(mStorage); i++) {
-      mStorage[i] = Word(aOther.mStorage[i]);
-    }
+    PodCopy(mStorage.begin(), aOther.mStorage.begin(), kNumWords);
     return *this;
   }
 
-  explicit BitSet(Span<StorageType, kNumWords> aStorage) {
-    for (size_t i = 0; i < std::size(mStorage); i++) {
-      mStorage[i] = Word(aStorage[i]);
-    }
+  explicit BitSet(Span<Word, kNumWords> aStorage) {
+    PodCopy(mStorage.begin(), aStorage.Elements(), kNumWords);
   }
 
   static constexpr size_t size() { return N; }
@@ -115,7 +84,7 @@ class BitSet {
   }
 
   constexpr bool IsEmpty() const {
-    for (const StorageType& word : mStorage) {
+    for (const Word& word : mStorage) {
       if (word) {
         return false;
       }
@@ -132,13 +101,13 @@ class BitSet {
     return {*this, aPos};
   }
 
-  BitSet operator|(const BitSet<N, StorageType>& aOther) {
+  BitSet operator|(const BitSet<N, Word>& aOther) {
     BitSet result = *this;
     result |= aOther;
     return result;
   }
 
-  BitSet& operator|=(const BitSet<N, StorageType>& aOther) {
+  BitSet& operator|=(const BitSet<N, Word>& aOther) {
     for (size_t i = 0; i < std::size(mStorage); i++) {
       mStorage[i] |= aOther.mStorage[i];
     }
@@ -151,27 +120,27 @@ class BitSet {
     return result;
   }
 
-  BitSet& operator&=(const BitSet<N, StorageType>& aOther) {
+  BitSet& operator&=(const BitSet<N, Word>& aOther) {
     for (size_t i = 0; i < std::size(mStorage); i++) {
       mStorage[i] &= aOther.mStorage[i];
     }
     return *this;
   }
 
-  BitSet operator&(const BitSet<N, StorageType>& aOther) const {
+  BitSet operator&(const BitSet<N, Word>& aOther) const {
     BitSet result = *this;
     result &= aOther;
     return result;
   }
 
-  bool operator==(const BitSet<N, StorageType>& aOther) const {
+  bool operator==(const BitSet<N, Word>& aOther) const {
     return mStorage == aOther.mStorage;
   }
 
   size_t Count() const {
     size_t count = 0;
 
-    for (const StorageType& word : mStorage) {
+    for (const Word& word : mStorage) {
       if constexpr (kBitsPerWord > 32) {
         count += CountPopulation64(word);
       } else {
@@ -183,22 +152,16 @@ class BitSet {
   }
 
   // Set all bits to false.
-  void ResetAll() {
-    for (StorageType& word : mStorage) {
-      word = Word(0);
-    }
-  }
+  void ResetAll() { PodArrayZero(mStorage); }
 
   // Set all bits to true.
   void SetAll() {
-    for (StorageType& word : mStorage) {
-      word = ~Word(0);
-    }
+    memset(mStorage.begin(), 0xff, kNumWords * sizeof(Word));
     ResetPaddingBits();
   }
 
   void Flip() {
-    for (StorageType& word : mStorage) {
+    for (Word& word : mStorage) {
       word = ~word;
     }
 
@@ -254,9 +217,9 @@ class BitSet {
     return wordIndex * kBitsPerWord + pos;
   }
 
-  Span<StorageType> Storage() { return mStorage; }
+  Span<Word> Storage() { return mStorage; }
 
-  Span<const StorageType> Storage() const { return mStorage; }
+  Span<const Word> Storage() const { return mStorage; }
 };
 
 }  // namespace mozilla

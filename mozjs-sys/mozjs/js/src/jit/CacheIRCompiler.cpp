@@ -1119,7 +1119,6 @@ static void InitWordStubField(StubField::Type type, void* dest,
   switch (type) {
     case StubField::Type::RawInt32:
     case StubField::Type::RawPointer:
-    case StubField::Type::ICScript:
     case StubField::Type::AllocSite:
       *static_cast<uintptr_t*>(dest) = value;
       break;
@@ -1180,7 +1179,6 @@ static void InitInt64StubField(StubField::Type type, void* dest,
       break;
     case StubField::Type::RawInt32:
     case StubField::Type::RawPointer:
-    case StubField::Type::ICScript:
     case StubField::Type::AllocSite:
     case StubField::Type::Shape:
     case StubField::Type::WeakShape:
@@ -1211,8 +1209,7 @@ void CacheIRWriter::copyStubData(uint8_t* dest) const {
   }
 }
 
-ICCacheIRStub* ICCacheIRStub::clone(JSRuntime* rt, ICStubSpace& newSpace,
-                                    ICScriptHandling icScriptHandling) {
+ICCacheIRStub* ICCacheIRStub::clone(JSRuntime* rt, ICStubSpace& newSpace) {
   const CacheIRStubInfo* info = stubInfo();
   MOZ_ASSERT(info->makesGCCalls());
 
@@ -1245,15 +1242,6 @@ ICCacheIRStub* ICCacheIRStub::clone(JSRuntime* rt, ICStubSpace& newSpace,
       InitWordStubField(type, dest, *srcField);
       src += sizeof(uintptr_t);
       dest += sizeof(uintptr_t);
-      if (type == StubField::Type::ICScript) {
-        auto* icScript = reinterpret_cast<ICScript*>(*srcField);
-        if (icScriptHandling == ICScriptHandling::MarkActive) {
-          icScript->setActive();
-        } else {
-          MOZ_ASSERT(icScriptHandling == ICScriptHandling::AssertActive);
-          MOZ_RELEASE_ASSERT(icScript->active());
-        }
-      }
     } else {
       const uint64_t* srcField = reinterpret_cast<const uint64_t*>(src);
       InitInt64StubField(type, dest, *srcField);
@@ -1290,7 +1278,6 @@ void jit::TraceCacheIRStub(JSTracer* trc, T* stub,
     switch (fieldType) {
       case Type::RawInt32:
       case Type::RawPointer:
-      case Type::ICScript:
       case Type::RawInt64:
       case Type::Double:
         break;
@@ -1438,7 +1425,6 @@ bool jit::TraceWeakCacheIRStub(JSTracer* trc, T* stub,
         return !isDead;
       case Type::RawInt32:
       case Type::RawPointer:
-      case Type::ICScript:
       case Type::Shape:
       case Type::JSObject:
       case Type::Symbol:
@@ -2210,10 +2196,12 @@ static const JSClass* ClassFor(JSContext* cx, GuardClassKind kind) {
     case GuardClassKind::Array:
     case GuardClassKind::PlainObject:
     case GuardClassKind::FixedLengthArrayBuffer:
+    case GuardClassKind::ImmutableArrayBuffer:
     case GuardClassKind::ResizableArrayBuffer:
     case GuardClassKind::FixedLengthSharedArrayBuffer:
     case GuardClassKind::GrowableSharedArrayBuffer:
     case GuardClassKind::FixedLengthDataView:
+    case GuardClassKind::ImmutableDataView:
     case GuardClassKind::ResizableDataView:
     case GuardClassKind::MappedArguments:
     case GuardClassKind::UnmappedArguments:
@@ -2260,39 +2248,6 @@ bool CacheIRCompiler::emitGuardClass(ObjOperandId objId, GuardClassKind kind) {
   } else {
     masm.branchTestObjClassNoSpectreMitigations(Assembler::NotEqual, obj, clasp,
                                                 scratch, failure->label());
-  }
-
-  return true;
-}
-
-bool CacheIRCompiler::emitGuardEitherClass(ObjOperandId objId,
-                                           GuardClassKind kind1,
-                                           GuardClassKind kind2) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register obj = allocator.useRegister(masm, objId);
-  AutoScratchRegister scratch(allocator, masm);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  // We don't yet need this case, so it's unsupported for now.
-  MOZ_ASSERT(kind1 != GuardClassKind::JSFunction &&
-             kind2 != GuardClassKind::JSFunction);
-
-  const JSClass* clasp1 = ClassFor(cx_, kind1);
-  MOZ_ASSERT(clasp1);
-
-  const JSClass* clasp2 = ClassFor(cx_, kind2);
-  MOZ_ASSERT(clasp2);
-
-  if (objectGuardNeedsSpectreMitigations(objId)) {
-    masm.branchTestObjClass(Assembler::NotEqual, obj, {clasp1, clasp2}, scratch,
-                            obj, failure->label());
-  } else {
-    masm.branchTestObjClassNoSpectreMitigations(
-        Assembler::NotEqual, obj, {clasp1, clasp2}, scratch, failure->label());
   }
 
   return true;
@@ -2592,6 +2547,36 @@ bool CacheIRCompiler::emitGuardIsNotProxy(ObjOperandId objId) {
   return true;
 }
 
+bool CacheIRCompiler::emitGuardToArrayBuffer(ObjOperandId objId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  Register obj = allocator.useRegister(masm, objId);
+  AutoScratchRegister scratch(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  masm.branchIfIsNotArrayBuffer(obj, scratch, failure->label());
+  return true;
+}
+
+bool CacheIRCompiler::emitGuardToSharedArrayBuffer(ObjOperandId objId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  Register obj = allocator.useRegister(masm, objId);
+  AutoScratchRegister scratch(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  masm.branchIfIsNotSharedArrayBuffer(obj, scratch, failure->label());
+  return true;
+}
+
 bool CacheIRCompiler::emitGuardIsNotArrayBufferMaybeShared(ObjOperandId objId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
 
@@ -2603,18 +2588,7 @@ bool CacheIRCompiler::emitGuardIsNotArrayBufferMaybeShared(ObjOperandId objId) {
     return false;
   }
 
-  masm.loadObjClassUnsafe(obj, scratch);
-  masm.branchPtr(Assembler::Equal, scratch,
-                 ImmPtr(&FixedLengthArrayBufferObject::class_),
-                 failure->label());
-  masm.branchPtr(Assembler::Equal, scratch,
-                 ImmPtr(&FixedLengthSharedArrayBufferObject::class_),
-                 failure->label());
-  masm.branchPtr(Assembler::Equal, scratch,
-                 ImmPtr(&ResizableArrayBufferObject::class_), failure->label());
-  masm.branchPtr(Assembler::Equal, scratch,
-                 ImmPtr(&GrowableSharedArrayBufferObject::class_),
-                 failure->label());
+  masm.branchIfIsArrayBufferMaybeShared(obj, scratch, failure->label());
   return true;
 }
 
@@ -2634,7 +2608,7 @@ bool CacheIRCompiler::emitGuardIsTypedArray(ObjOperandId objId) {
   return true;
 }
 
-bool CacheIRCompiler::emitGuardIsFixedLengthTypedArray(ObjOperandId objId) {
+bool CacheIRCompiler::emitGuardIsNonResizableTypedArray(ObjOperandId objId) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
 
   Register obj = allocator.useRegister(masm, objId);
@@ -2646,7 +2620,7 @@ bool CacheIRCompiler::emitGuardIsFixedLengthTypedArray(ObjOperandId objId) {
   }
 
   masm.loadObjClassUnsafe(obj, scratch);
-  masm.branchIfClassIsNotFixedLengthTypedArray(scratch, failure->label());
+  masm.branchIfClassIsNotNonResizableTypedArray(scratch, failure->label());
   return true;
 }
 
@@ -5391,7 +5365,8 @@ bool CacheIRCompiler::emitLoadTypedArrayElementExistsResult(
   Label outOfBounds, done;
 
   // Bounds check.
-  if (viewKind == ArrayBufferViewKind::FixedLength) {
+  if (viewKind == ArrayBufferViewKind::FixedLength ||
+      viewKind == ArrayBufferViewKind::Immutable) {
     masm.loadArrayBufferViewLengthIntPtr(obj, scratch);
   } else {
     // Bounds check doesn't require synchronization. See IsValidIntegerIndex
@@ -7215,7 +7190,8 @@ void CacheIRCompiler::emitTypedArrayBoundsCheck(ArrayBufferViewKind viewKind,
     spectreScratch = maybeScratch;
   }
 
-  if (viewKind == ArrayBufferViewKind::FixedLength) {
+  if (viewKind == ArrayBufferViewKind::FixedLength ||
+      viewKind == ArrayBufferViewKind::Immutable) {
     masm.loadArrayBufferViewLengthIntPtr(obj, scratch);
     masm.spectreBoundsCheckPtr(index, scratch, spectreScratch, fail);
   } else {
@@ -7346,7 +7322,8 @@ void CacheIRCompiler::emitDataViewBoundsCheck(ArrayBufferViewKind viewKind,
   MOZ_ASSERT(offset != scratch);
   MOZ_ASSERT(offset != maybeScratch);
 
-  if (viewKind == ArrayBufferViewKind::FixedLength) {
+  if (viewKind == ArrayBufferViewKind::FixedLength ||
+      viewKind == ArrayBufferViewKind::Immutable) {
     masm.loadArrayBufferViewLengthIntPtr(obj, scratch);
   } else {
     if (maybeScratch == InvalidReg) {
@@ -9335,6 +9312,36 @@ bool CacheIRCompiler::emitMegamorphicStoreSlot(ObjOperandId objId,
   return true;
 }
 
+bool CacheIRCompiler::emitLoadGetterSetterFunction(ValOperandId getterSetterId,
+                                                   bool isGetter,
+                                                   bool needsClassGuard,
+                                                   ObjOperandId resultId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  ValueOperand getterSetter = allocator.useValueRegister(masm, getterSetterId);
+  Register output = allocator.defineRegister(masm, resultId);
+  AutoScratchRegister scratch(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  masm.unboxNonDouble(getterSetter, output, JSVAL_TYPE_PRIVATE_GCTHING);
+
+  size_t offset = isGetter ? GetterSetter::offsetOfGetter()
+                           : GetterSetter::offsetOfSetter();
+  masm.loadPtr(Address(output, offset), output);
+
+  masm.branchTestPtr(Assembler::Zero, output, output, failure->label());
+  if (needsClassGuard) {
+    masm.branchTestObjIsFunction(Assembler::NotEqual, output, scratch, output,
+                                 failure->label());
+  }
+
+  return true;
+}
+
 bool CacheIRCompiler::emitGuardHasGetterSetter(ObjOperandId objId,
                                                uint32_t idOffset,
                                                uint32_t getterSetterOffset) {
@@ -10318,7 +10325,8 @@ bool CacheIRCompiler::emitAtomicsLoadResult(ObjOperandId objId,
                                          output ? *output : callvm->output());
   Maybe<AutoSpectreBoundsScratchRegister> spectreTemp;
   Maybe<AutoScratchRegister> scratch2;
-  if (viewKind == ArrayBufferViewKind::FixedLength) {
+  if (viewKind == ArrayBufferViewKind::FixedLength ||
+      viewKind == ArrayBufferViewKind::Immutable) {
     spectreTemp.emplace(allocator, masm);
   } else {
     scratch2.emplace(allocator, masm);

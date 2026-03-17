@@ -184,7 +184,7 @@ rsync_filter_list = """
 + /third_party/xsimd/**
 + /layout/tools/reftest/reftest/**
 
-+ /testing/*.py
++ /testing/mach_commands.py
 + /testing/moz.build
 + /testing/mozbase/**
 + /testing/mozharness/**

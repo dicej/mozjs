@@ -4,8 +4,8 @@
     "debug": true,
     "nspr": false,
     "compiler": "clang",
-    "extra-args": {
-        "jit-test": ["--jitflags=ion"]
+    "env": {
+        "JITTEST_EXTRA_ARGS": "--jitflags=ion"
     },
     "skip-tests": {
         "all": ["jstests"]
